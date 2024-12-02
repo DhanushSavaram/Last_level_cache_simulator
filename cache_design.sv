@@ -5,7 +5,7 @@ module cache_design;
 cache_entry_t cache [SETS][WAYS];
 
 bit [$clog2(WAYS)-1:0] ways_seq[WAYS-1:0];
-initial begin
+initial begin 
     ways_seq[0]  = 4'b0000;
     ways_seq[1]  = 4'b0001;
     ways_seq[2]  = 4'b0010;
@@ -20,7 +20,7 @@ initial begin
     ways_seq[11] = 4'b1011;
     ways_seq[12] = 4'b1100;
     ways_seq[13] = 4'b1101;
-    ways_seq[14] = 4'b1110;
+    ways_seq[14] = 4'b1110; 
     ways_seq[15] = 4'b1111;
 end
 
