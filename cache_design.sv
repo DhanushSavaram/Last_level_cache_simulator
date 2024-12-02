@@ -1,62 +1,21 @@
-// Snooped of our L2 cache
-`define SNOHIT 0
-`define SHIT 1
-`define SHITM 2
-  
-//Snoop Results of other caches
-`define NOHIT 2'b11
-`define HIT 2'b00
-`define HITM 2'b01
-
-//"---00= HIT,   ---01 = HitM        ---10   or  ---11 = NoHit"
-
-`define READ 1
-`define WRITE 2
-`define INVALIDATE 3
-`define RWIM 4 
-
- //L2 to L1 Messages
-`define GETLINE 1 
-`define SENDLINE 2 
-`define INVALIDATELINE 3 
-`define EVICTLINE 4 
-
-
-//MESI bits
-`define I 2'b00
-`define E 2'b01
-`define M 2'b10
-`define S 2'b11
-
+import cache_define ::*;
 
 module cache_design;
-  
-`define INIT_STATE
-localparam int SETS = 2**14;          
-localparam int WAYS = 16;          
-localparam int INDEX_BITS = 14;
-localparam int PLRU_BITS = 15;
-
-typedef struct packed {
-  bit [1:0]MESI;           
-  bit [INDEX_BITS-3:0] tag;
-} cache_entry_t;
-
 
 cache_entry_t cache [SETS][WAYS];
 
- bit [$clog2(WAYS)-1:0] ways_seq[WAYS-1:0];
+bit [$clog2(WAYS)-1:0] ways_seq[WAYS-1:0];
 initial begin
-    ways_seq[0] = 4'b0000;
-    ways_seq[1] = 4'b0001;
-    ways_seq[2] = 4'b0010;
-    ways_seq[3] = 4'b0011;
-    ways_seq[4] = 4'b0100;
-    ways_seq[5] = 4'b0101;
-    ways_seq[6] = 4'b0110;
-    ways_seq[7] = 4'b0111;
-    ways_seq[8] = 4'b1000;
-    ways_seq[9] = 4'b1001;
+    ways_seq[0]  = 4'b0000;
+    ways_seq[1]  = 4'b0001;
+    ways_seq[2]  = 4'b0010;
+    ways_seq[3]  = 4'b0011;
+    ways_seq[4]  = 4'b0100;
+    ways_seq[5]  = 4'b0101;
+    ways_seq[6]  = 4'b0110;
+    ways_seq[7]  = 4'b0111;
+    ways_seq[8]  = 4'b1000;
+    ways_seq[9]  = 4'b1001;
     ways_seq[10] = 4'b1010;
     ways_seq[11] = 4'b1011;
     ways_seq[12] = 4'b1100;
@@ -106,14 +65,44 @@ initial begin
 
     while (!$feof(file)) begin
       status = $fscanf(file, "%d %h\n", id, Address); 
-      if (status == 2) begin
+      if (status == 2)
+        begin
         `ifdef DEBUG
-           sample(id,Address  );
+           $display("id=%0d, Address=%h", id, Address);
+             case(id,address)
+                  0,2 : PrRd(Address);
+                    1 : Processor_Write(Address);
+                    3 : SnoopedRead(Address);
+                    4 : $display("Snooped Write");
+                    5 : SnoopedRdx(Address);
+                    6 : SnoopedInvalidate(Address)
+               default: $display("Not valid operation");
+             endcase  
         `endif
-      end
+        end
+
+       else if(status==1)
+          begin
+
+             case(id)
+                  8:ClearCache();
+                  9:PrintContents();
+             endcase
+
+          end
+
+
+       else
+          $display("Not Valid Operation");
+
+
        for(int i=0; i<16;i++) begin
-          $display("tag=%b",cache[input_index][i].MESI);
+          $display("MESI=%b, tag=%h",cache[input_index][i].MESI, cache[input_index][i].tag);
        end
+       foreach(PLRU[input_index][i]) begin
+          $display("PLRU[%0d]:%b",i,PLRU[input_index][i]);
+       end
+
 end
 
  $display("cache_reads = %0d cache_writes=%0d cache_hits = %0d cache_misses = %0d",cache_reads,cache_writes,cache_hits,cache_misses);
@@ -162,22 +151,25 @@ end
   // Bus Operations
   function automatic void BusOperation(int BusOp, bit[31:0] Address, int SnoopResult);
     SnoopResult=GetSnoopResult(Address);
-    $display("BusOp: %0d, Address: %h, Snoop Result: %0d\n",BusOp,Address, SnoopResult);
+     if(NormalMode)
+        $display("BusOp: %0d, Address: %h, Snoop Result: %0d\n",BusOp,Address, SnoopResult);
   endfunction
-  
   
   // Put Snoop Results
   function automatic void PutSnoopResult(bit [31:0] Address, int SnoopResult);
-      $display("SnoopResult: Address %h, SnoopResult: %0d\n", Address, SnoopResult);
+     if(NormalMode)
+         $display("SnoopResult: Address %h, SnoopResult: %0d\n", Address, SnoopResult);
   endfunction
   
 
   //Message to Higher Level Ccahe
   function automatic void MessageToCache(int Message, bit [31:0] Address);
-    $display("L2: %0d %0h\n", Message, Address);
+   if(NormalMode)
+        $display("L2: %0d %0h\n", Message, Address);
   endfunction
   
   
+
 
   // Get SnoopResults
   function automatic int GetSnoopResult(bit[31:0] Address);
@@ -197,11 +189,11 @@ end
       0,2 : PrRd(Address);
       1 : Processor_Write(Address);
       3 : SnoopedRead(Address);
-      4 : $display("snooped write request");
+      4 : $display("Snooped Write");
       5 : SnoopedRdx(Address);
-      6 : $display("snooped Invalidate");
-      8 : $display("reset all the states");
-      9 : $display("print all the cache values");
+      6 : SnoopedInvalidate(Address);
+      8 : ClearCache();
+      9 : PrintContents();
       default: $display("Not valid operation");
     endcase
   endfunction
@@ -219,9 +211,11 @@ end
               begin
                  if(cache[input_index][j].MESI==`S || cache[input_index][j].MESI==`E || cache[input_index][j].MESI==`M)
                     begin
+
                       valid_count+=1;
                          if(cache[input_index][j].tag==input_tag)
                               begin
+
                                 cache_hits+=1;
                                 MessageToCache(`SENDLINE,Address);
                                 Update_PLRU(PLRU[input_index],ways_seq[j]);
@@ -231,8 +225,9 @@ end
                     end
               end
          end
-$display("valid_count=%0d,bool_a=%0b",valid_count,bool_a);
-                  if(bool_a==0 && valid_count!=16)
+
+
+     if(bool_a==0 && valid_count!=16)
                     begin
                       cache_misses+=1;
                       for(int i=0;i<16;i++) begin
@@ -269,64 +264,63 @@ $display("valid_count=%0d,bool_a=%0b",valid_count,bool_a);
 
 
 
-function automatic void Processor_Write(bit [31:0] Address);
-bit flag;
-int valid_count; 
-input_index = Address[19:6];
-input_tag = Address [31:20];
-cache_writes+=1;
+    function automatic void Processor_Write(bit [31:0] Address);
+      bit flag;
+      int valid_count; 
+      input_index = Address[19:6];
+      input_tag = Address [31:20];
+      cache_writes+=1;
 
-for(int j=0; j<16; j=j+1)
-    begin
-  $display("MESI:%d tag = %d",cache[input_index][j].MESI,cache[input_index][j].MESI);
+      for(int j=0; j<16; j=j+1)
+          begin
+              if(cache[input_index][j].MESI==`S || cache[input_index][j].MESI==`E || cache[input_index][j].MESI==`M)
+                  begin
+                      valid_count+=1;
+                      if(cache[input_index][j].tag==input_tag)
+                      begin
+                      cache_hits+=1;
+                      MessageToCache(`SENDLINE,Address);
+                      if(cache[input_index][j].MESI==`S)
+                            BusOperation(`INVALIDATE,Address,SnoopResult);
+                      cache[input_index][j].MESI= `M;                         
+                      Update_PLRU(PLRU[input_index],ways_seq[j]);
+                      flag=1;
+                      break;
+                      end
+                  end
+          end
 
-        if(cache[input_index][j].MESI==`S || cache[input_index][j].MESI==`E || cache[input_index][j].MESI==`M)
-            begin
-                valid_count+=1;
-                if(cache[input_index][j].tag==input_tag)
+
+      if(flag==0 && valid_count!=16)
+          begin
+              cache_misses+=1;
+              for(int i=0;i<16;i++) 
                 begin
-                cache_hits+=1;
-                MessageToCache(`SENDLINE,Address);
-                //if(cache[input_index][j].MESI==`S)
-                    //begin
-                    //BusOperation(`HITM,Address,`INVALIDATE);
-                    //end 
-                cache[input_index][j].MESI= `M;                         
-                Update_PLRU(PLRU[input_index],ways_seq[j]);
-                flag=1;
-                break;
+                  if(cache [input_index][i].MESI==`I)
+                      begin 
+                          BusOperation(`RWIM,Address,SnoopResult);
+                          cache [input_index][i].MESI=`M;  
+                          Update_PLRU(PLRU[input_index],ways_seq[i]);
+                          cache [input_index][i].tag=input_tag;
+                          MessageToCache(`SENDLINE,Address);
+                          break;
+                      end
                 end
-            end
-    end
-$display("valid_count",valid_count);
 
-if(flag==0 && valid_count!=16)
-    begin
-        cache_misses+=1;
-        for(int i=0;i<16;i++) begin
-            if(cache [input_index][i].MESI==`I)
-                begin
-                    cache [input_index][i].MESI=`M;  
-                    Update_PLRU(PLRU[input_index],ways_seq[i]);
-                    cache [input_index][i].tag=input_tag;
-                    // MessageToCache(`SENDLINE,Address);
-                    break;
-                end
-        end
-            
-end
+          end
 
-if(flag==0 && valid_count==16)
-            begin
-                bit [3:0]WayToEvict;
-                WayToEvict=victim_cache(PLRU[input_index]);
-                cache [input_index][WayToEvict].MESI=`M; 
-                cache [input_index][WayToEvict].tag=input_tag;
-                // MessageToCache(`SENDLINE,Address);
-                cache_misses+=1;
-            end            
+      if(flag==0 && valid_count==16)
+                  begin
+                      bit [3:0]WayToEvict;
+                      WayToEvict=victim_cache(PLRU[input_index]);
+                      BusOperation(`RWIM,Address,SnoopResult);
+                      cache [input_index][WayToEvict].MESI=`M; 
+                      cache [input_index][WayToEvict].tag=input_tag;
+                      MessageToCache(`SENDLINE,Address);
+                      cache_misses+=1;
+                  end            
 
-endfunction
+      endfunction
 
 
 
@@ -342,15 +336,15 @@ endfunction
           if (cache[input_index][i].MESI!=`I && cache[input_index][i].tag==input_tag)
              begin
                if (cache[input_index][i].MESI==`E || cache[input_index][i].MESI==`S)
-                   PutSnoopResult(Address, `SHIT);
+                   PutSnoopResult(Address, `HIT);
                else
-                   PutSnoopResult(Address, `SHITM);
+                   PutSnoopResult(Address, `HITM);
                cache[input_tag][i].MESI=`S;
                break;
              end
         end
      if(valid_count==16)
-         PutSnoopResult(Address,`SNOHIT);
+         PutSnoopResult(Address,`NOHIT);
   endfunction
 
 
@@ -367,9 +361,9 @@ endfunction
            begin
               valid_count+=1;
              if (cache[input_index][i].MESI==`E || cache[input_index][i].MESI==`S)
-                PutSnoopResult(Address, `SHIT);
+                PutSnoopResult(Address, `HIT);
              else
-                PutSnoopResult(Address, `SHITM);
+                PutSnoopResult(Address, `HITM);
 
            MessageToCache(`INVALIDATELINE, Address);
            cache[input_index][i].MESI=`I;
@@ -379,14 +373,14 @@ endfunction
         end
       if(valid_count==16)
         begin
-         PutSnoopResult(Address,`SNOHIT);
+         PutSnoopResult(Address,`NOHIT);
          $display("Nothing to send");
         end
   endfunction 
 
 
  //Snooped Invalidate Operation
-  function automatic void Snooped_Invalidate(bit [31:0]Address);
+  function automatic void SnoopedInvalidate(bit [31:0]Address);
       int valid_count=0;
       input_index = Address[19:6];
       input_tag = Address [31:20];
@@ -395,22 +389,49 @@ endfunction
           if (cache[input_index][i].MESI==`S && cache[input_index][i].tag==input_tag)
            begin
              valid_count+=1;
-             PutSnoopResult(Address,`SHIT);
+             PutSnoopResult(Address,`HIT);
              MessageToCache(`INVALIDATELINE, Address);
              cache[input_index][i].MESI=`I;
-             $display("cache[input_index][i].MESI=%b",cache[input_index][i].MESI);
              break;
            end
         end
       if(valid_count==16)
         begin
-         PutSnoopResult(Address,`SNOHIT);
+         PutSnoopResult(Address,`NOHIT);
         end
   endfunction
     
+   //Clear and reset all the cache 
+    function automatic void ClearCache();
+          for (int i = 0; i < SETS; i++) 
+            begin
+              PLRU[i]='0;
+              for (int j = 0; j < WAYS; j++) 
+                begin
+                  cache[i][j].MESI = 2'b0;
+                  cache[i][j].tag   = 12'b0;
+                end
+            end
+    endfunction
+  
+
+
+    //Print the Contents in the Cache
+    function automatic void PrintContents();
+          for (int i = 0; i < SETS; i++) 
+            begin
+
+              $display("PLRU[%0d]:%b",i,PLRU[i]);
+              for (int j = 0; j < WAYS; j++) 
+                 begin
+
+                   if (cache[SETS][WAYS].MESI!=`I) 
+                     begin
+                      $display("cache[%0d][%0d].tag=%b, MESI=%b",i,j,cache[i][j].tag,cache[i][j].MESI);
+                      $display("---------------------------------------------------------------------");
+                 end
+            end
+    endfunction
+
 
 endmodule
-
-              
-               
-           
